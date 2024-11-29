@@ -1,0 +1,27 @@
+model Address {
+  id              String    @id @default(uuid())
+  type            String    // 'home' | 'work' | 'billing' | 'shipping'
+  address_line1   String
+  address_line2   String?
+  city            String
+  state           String
+  postal_code     String
+  country         String
+  is_default      Boolean   @default(false)
+  latitude        Float?
+  longitude       Float?
+  mapbox_id       String?
+  place_formatted String?
+  full_address    String?
+  match_code      Json?
+  is_verified     Boolean   @default(false)
+  user_id         String
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([is_default])
+  @@map("addresses")
+}
