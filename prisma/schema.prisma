@@ -38,6 +38,9 @@ model User {
   // Relations
   addresses Address[]
   sessions  Session[]
+  userRoles UserRole[]
+  teamRoles TeamRole[]
+  projectRoles ProjectRole[]
 
   @@map("users")
 }
@@ -81,4 +84,154 @@ model Address {
   @@index([user_id])
   @@index([is_default])
   @@map("addresses")
+}
+
+// RBAC Models
+model Role {
+  id            String       @id @default(uuid())
+  name          String      @unique
+  description   String?
+  isSystem      Boolean     @default(false)  // Identifies system-level roles
+  parentRoleId  String?     // Support role inheritance
+  parentRole    Role?       @relation("RoleHierarchy", fields: [parentRoleId], references: [id])
+  childRoles    Role[]      @relation("RoleHierarchy")
+  scope         String      @default("global") // global, team, project, custom
+  scopeId       String?     // ID of the scope entity if not global
+  priority      Int         @default(0)      // Higher priority roles override lower ones
+  created_at    DateTime    @default(now())
+  updated_at    DateTime    @updatedAt
+  permissions   RolePermission[]
+  userRoles     UserRole[]
+  conditions    RoleCondition[]
+
+  @@index([scope, scopeId])
+  @@map("roles")
+}
+
+model Permission {
+  id          String       @id @default(uuid())
+  name        String      @unique
+  description String?
+  resource    String      // The resource this permission applies to
+  action      String      // The action allowed
+  conditions  Json?       // JSON object containing permission conditions
+  metadata    Json?       // Additional metadata for the permission
+  created_at  DateTime    @default(now())
+  updated_at  DateTime    @updatedAt
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id            String     @id @default(uuid())
+  roleId        String
+  permissionId  String
+  conditions    Json?      // Override conditions for this specific role-permission
+  attributes    String[]   // Specific fields or conditions for this role-permission
+  created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
+  role          Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission    Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model RoleCondition {
+  id          String    @id @default(uuid())
+  roleId      String
+  type        String    // time, location, resource-state, custom
+  condition   Json      // JSON object containing the condition logic
+  priority    Int       @default(0)
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+  role        Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@map("role_conditions")
+}
+
+model UserRole {
+  id          String    @id @default(uuid())
+  userId      String
+  roleId      String
+  scopeId     String?   // For scoped roles (team, project, etc.)
+  expiresAt   DateTime?
+  conditions  Json?     // User-specific conditions
+  metadata    Json?     // Additional metadata
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId, scopeId])
+  @@map("user_roles")
+}
+
+// Dynamic Scope Models
+model Scope {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  type        String    // team, project, organization, custom
+  description String?
+  metadata    Json?
+  parentId    String?
+  parent      Scope?    @relation("ScopeHierarchy", fields: [parentId], references: [id])
+  children    Scope[]   @relation("ScopeHierarchy")
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  @@map("scopes")
+}
+
+model Team {
+  id          String     @id @default(uuid())
+  name        String
+  description String?
+  created_at  DateTime   @default(now())
+  updated_at  DateTime   @updatedAt
+  teamRoles   TeamRole[]
+
+  @@map("teams")
+}
+
+model TeamRole {
+  id         String   @id @default(uuid())
+  team_id    String
+  role_id    String
+  user_id    String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  team       Team     @relation(fields: [team_id], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([team_id, role_id, user_id])
+  @@map("team_roles")
+}
+
+model Project {
+  id           String        @id @default(uuid())
+  name         String
+  description  String?
+  created_at   DateTime      @default(now())
+  updated_at   DateTime      @updatedAt
+  projectRoles ProjectRole[]
+
+  @@map("projects")
+}
+
+model ProjectRole {
+  id         String   @id @default(uuid())
+  project_id String
+  role_id    String
+  user_id    String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  project    Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([project_id, role_id, user_id])
+  @@map("project_roles")
 }
