@@ -1,5 +1,6 @@
-import { PrismaClient } from '@prisma/client';
-const prisma = new PrismaClient();
+/// <reference types="node" />
+
+import { prisma } from '../../lib/prisma';
 
 async function main() {
   // Create platform-level roles
@@ -7,6 +8,7 @@ async function main() {
     data: {
       name: 'platform_admin',
       description: 'Full platform administration access',
+      isSystem: true
     },
   });
 
@@ -14,14 +16,32 @@ async function main() {
     data: {
       name: 'moderator',
       description: 'Platform content moderation access',
+      isSystem: true
     },
   });
 
-  // Create resource-specific roles
+  const support = await prisma.role.create({
+    data: {
+      name: 'support',
+      description: 'Customer support access',
+      isSystem: true
+    },
+  });
+
+  // Create team-level roles
   const teamAdmin = await prisma.role.create({
     data: {
       name: 'team_admin',
       description: 'Team administration access',
+      isSystem: true
+    },
+  });
+
+  const teamModerator = await prisma.role.create({
+    data: {
+      name: 'team_moderator',
+      description: 'Team moderation access',
+      parentRoleId: teamAdmin.id
     },
   });
 
@@ -29,13 +49,24 @@ async function main() {
     data: {
       name: 'team_member',
       description: 'Regular team member access',
+      parentRoleId: teamModerator.id
     },
   });
 
+  // Create project-level roles
   const projectManager = await prisma.role.create({
     data: {
       name: 'project_manager',
       description: 'Project management access',
+      isSystem: true
+    },
+  });
+
+  const projectLead = await prisma.role.create({
+    data: {
+      name: 'project_lead',
+      description: 'Project team lead access',
+      parentRoleId: projectManager.id
     },
   });
 
@@ -43,125 +74,212 @@ async function main() {
     data: {
       name: 'project_member',
       description: 'Regular project member access',
+      parentRoleId: projectLead.id
     },
   });
 
   // Create permissions
   const permissions = await Promise.all([
-    // User management permissions
+    // Platform admin permissions
     prisma.permission.create({
       data: {
-        name: 'manage_users',
-        description: 'Can manage all user accounts',
-        resource: 'users',
-        action: 'manage',
-        attributes: ['*'],
-      },
-    }),
-    prisma.permission.create({
-      data: {
-        name: 'view_users',
-        description: 'Can view user profiles',
-        resource: 'users',
-        action: 'read',
-        attributes: ['profile'],
-      },
+        resource: '*',
+        action: '*',
+        description: 'Full platform access',
+        RolePermission: {
+          create: {
+            roleId: platformAdmin.id
+          }
+        }
+      }
     }),
 
-    // Team permissions
+    // Moderation permissions
     prisma.permission.create({
       data: {
-        name: 'manage_teams',
-        description: 'Can manage all teams',
-        resource: 'teams',
-        action: 'manage',
-        attributes: ['*'],
-      },
+        resource: 'content',
+        action: 'moderate',
+        description: 'Moderate platform content',
+        RolePermission: {
+          create: {
+            roleId: moderator.id,
+            conditions: {
+              create: {
+                type: 'content-state',
+                condition: JSON.stringify({
+                  type: 'content-state',
+                  rule: 'content.status === "flagged" || content.status === "reported"'
+                })
+              }
+            }
+          }
+        }
+      }
     }),
+
+    // Support permissions
     prisma.permission.create({
       data: {
-        name: 'create_team',
-        description: 'Can create new teams',
-        resource: 'teams',
+        resource: 'support',
+        action: 'manage',
+        description: 'Manage support tickets',
+        RolePermission: {
+          create: {
+            roleId: support.id,
+            conditions: {
+              create: {
+                type: 'business-hours',
+                condition: JSON.stringify({
+                  type: 'time-window',
+                  start: '09:00',
+                  end: '17:00',
+                  timezone: 'UTC'
+                })
+              }
+            }
+          }
+        }
+      }
+    }),
+
+    // Team admin permissions
+    prisma.permission.create({
+      data: {
+        resource: 'team',
+        action: 'manage',
+        description: 'Manage team settings and members',
+        RolePermission: {
+          create: {
+            roleId: teamAdmin.id,
+            conditions: {
+              create: {
+                type: 'scope',
+                condition: JSON.stringify({
+                  type: 'scope-match',
+                  rule: 'context.scopeId === team.id'
+                })
+              }
+            }
+          }
+        }
+      }
+    }),
+
+    // Team moderator permissions
+    prisma.permission.create({
+      data: {
+        resource: 'team.content',
+        action: 'moderate',
+        description: 'Moderate team content',
+        RolePermission: {
+          create: {
+            roleId: teamModerator.id,
+            conditions: {
+              create: {
+                type: 'scope',
+                condition: JSON.stringify({
+                  type: 'scope-match',
+                  rule: 'context.scopeId === team.id'
+                })
+              }
+            }
+          }
+        }
+      }
+    }),
+
+    // Team member permissions
+    prisma.permission.create({
+      data: {
+        resource: 'team.content',
         action: 'create',
-        attributes: [],
-      },
+        description: 'Create team content',
+        RolePermission: {
+          create: {
+            roleId: teamMember.id,
+            conditions: {
+              create: {
+                type: 'membership',
+                condition: JSON.stringify({
+                  type: 'team-membership',
+                  rule: 'user.teams.includes(team.id)'
+                })
+              }
+            }
+          }
+        }
+      }
     }),
 
-    // Project permissions
+    // Project manager permissions
     prisma.permission.create({
       data: {
-        name: 'manage_projects',
-        description: 'Can manage all projects',
-        resource: 'projects',
+        resource: 'project',
         action: 'manage',
-        attributes: ['*'],
-      },
-    }),
-    prisma.permission.create({
-      data: {
-        name: 'create_project',
-        description: 'Can create new projects',
-        resource: 'projects',
-        action: 'create',
-        attributes: [],
-      },
+        description: 'Manage project settings and members',
+        RolePermission: {
+          create: {
+            roleId: projectManager.id,
+            conditions: {
+              create: {
+                type: 'scope',
+                condition: JSON.stringify({
+                  type: 'scope-match',
+                  rule: 'context.scopeId === project.id'
+                })
+              }
+            }
+          }
+        }
+      }
     }),
 
-    // Role and permission management
+    // Project lead permissions
     prisma.permission.create({
       data: {
-        name: 'manage_roles',
-        description: 'Can manage roles and permissions',
-        resource: 'roles',
-        action: 'manage',
-        attributes: ['*'],
-      },
+        resource: 'project.tasks',
+        action: 'assign',
+        description: 'Assign project tasks',
+        RolePermission: {
+          create: {
+            roleId: projectLead.id,
+            conditions: {
+              create: {
+                type: 'scope',
+                condition: JSON.stringify({
+                  type: 'scope-match',
+                  rule: 'context.scopeId === project.id'
+                })
+              }
+            }
+          }
+        }
+      }
     }),
+
+    // Project member permissions
+    prisma.permission.create({
+      data: {
+        resource: 'project.tasks',
+        action: 'view',
+        description: 'View project tasks',
+        RolePermission: {
+          create: {
+            roleId: projectMember.id,
+            conditions: {
+              create: {
+                type: 'membership',
+                condition: JSON.stringify({
+                  type: 'project-membership',
+                  rule: 'user.projects.includes(project.id)'
+                })
+              }
+            }
+          }
+        }
+      }
+    })
   ]);
-
-  // Assign permissions to roles
-  await prisma.role.update({
-    where: { id: platformAdmin.id },
-    data: {
-      permissions: {
-        connect: permissions.map(p => ({ id: p.id })),
-      },
-    },
-  });
-
-  await prisma.role.update({
-    where: { id: moderator.id },
-    data: {
-      permissions: {
-        connect: permissions
-          .filter(p => ['view_users', 'manage_users'].includes(p.name))
-          .map(p => ({ id: p.id })),
-      },
-    },
-  });
-
-  await prisma.role.update({
-    where: { id: teamAdmin.id },
-    data: {
-      permissions: {
-        connect: permissions
-          .filter(p => ['manage_teams', 'create_team'].includes(p.name))
-          .map(p => ({ id: p.id })),
-      },
-    },
-  });
-
-  await prisma.role.update({
-    where: { id: projectManager.id },
-    data: {
-      permissions: {
-        connect: permissions
-          .filter(p => ['manage_projects', 'create_project'].includes(p.name))
-          .map(p => ({ id: p.id })),
-      },
-    },
-  });
 
   console.log('RBAC seed completed successfully');
 }

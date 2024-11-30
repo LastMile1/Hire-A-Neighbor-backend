@@ -1,32 +1,55 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
-import authRoutes from './routes/auth';
-import notificationRoutes from './routes/notifications';
-import addressRoutes from './routes/addresses';
+import helmet from 'helmet';
+import { config } from './core/config';
+import { logger } from './core/utils/logger';
+import { errorHandler } from './core/middleware/errorHandler';
+import { globalRateLimiter } from './core/middleware/rateLimiter';
 
-dotenv.config();
+// Import routes
+import { router as addressRouter } from './features/address';
+import { router as authRouter } from './features/auth';
+import { router as notificationsRouter } from './features/notifications';
 
 const app = express();
-const port = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3001',
-  credentials: true
-}));
+// Apply global middleware
+app.use(helmet());
+app.use(cors(config.cors));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(globalRateLimiter);
 
-// Routes
-app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/notifications', notificationRoutes);
-app.use('/api/v1/addresses', addressRoutes);
-
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'healthy' });
+// Health check endpoint
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    environment: config.env
+  });
 });
 
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+// Version endpoint
+app.get('/version', (_req: Request, res: Response) => {
+  res.json({
+    version: process.env.npm_package_version || '1.0.0',
+    environment: config.env
+  });
+});
+
+// Apply routes
+app.use('/api/v1/addresses', addressRouter);
+app.use('/api/v1/auth', authRouter);
+app.use('/api/v1/notifications', notificationsRouter);
+
+// Error handling middleware must be after all routes
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  errorHandler(err, req, res, next);
+  // Don't return anything here since errorHandler will handle the response
+});
+
+// Start server
+const PORT = config.port || 3000;
+app.listen(PORT, () => {
+  logger.info(`Server started on port ${PORT} in ${config.env} mode`);
 });

@@ -1,5 +1,4 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// prisma/schema.prisma
 
 generator client {
   provider = "prisma-client-js"
@@ -10,22 +9,26 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+//
+// User and Authentication Models
+//
+
 model User {
-  id                String    @id @default(uuid())
-  email             String    @unique
-  encrypted_password String?
-  first_name        String?
-  last_name         String?
-  full_name         String?
-  avatar_url        String?
-  phone             String?
-  role              String    @default("user") // 'admin' | 'user'
-  status            String    @default("active") // 'active' | 'inactive' | 'banned'
-  email_verified    Boolean   @default(false)
-  phone_verified    Boolean   @default(false)
-  last_sign_in_at   DateTime?
-  created_at        DateTime  @default(now())
-  updated_at        DateTime  @updatedAt
+  id                  String        @id @default(uuid())
+  email               String        @unique
+  encrypted_password  String?
+  first_name          String?
+  last_name           String?
+  full_name           String?
+  avatar_url          String?
+  phone               String?
+  role                String        @default("user") // 'admin' | 'user'
+  status              String        @default("active") // 'active' | 'inactive' | 'banned'
+  email_verified      Boolean       @default(false)
+  phone_verified      Boolean       @default(false)
+  last_sign_in_at     DateTime?
+  created_at          DateTime      @default(now())
+  updated_at          DateTime      @updatedAt
 
   // Auth related fields
   confirmation_token      String?
@@ -36,21 +39,22 @@ model User {
   remember_created_at    DateTime?
 
   // Relations
-  addresses Address[]
-  sessions  Session[]
-  userRoles UserRole[]
-  teamRoles TeamRole[]
+  addresses    Address[]
+  sessions     Session[]
+  teamRoles    TeamRole[]
   projectRoles ProjectRole[]
+  notifications notifications[]
+  userRoles    UserRole[]
 
   @@map("users")
 }
 
 model Session {
-  id           String   @id @default(uuid())
-  user_id      String
-  expires_at   DateTime
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  user_id    String
+  expires_at DateTime
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
@@ -60,128 +64,130 @@ model Session {
 
 model Address {
   id              String    @id @default(uuid())
-  type            String    // 'home' | 'work' | 'billing' | 'shipping'
-  address_line1   String
-  address_line2   String?
-  city            String
-  state           String
-  postal_code     String
-  country         String
+  
+  // Entity type and user association
+  type            String    @db.VarChar(50)  // EntityType enum: 'USER', 'BUSINESS', 'EVENT'
+  user_id         String
+  user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  
+  // Basic address fields
+  address_line1   String    @db.VarChar(100)
+  address_line2   String?   @db.VarChar(100)
+  unit_number     String?   @db.VarChar(20)
+  city            String    @db.VarChar(100)
+  state           String    @db.VarChar(50)  // State/Province/Region
+  postal_code     String    @db.VarChar(20)
+  country         String    @default("US") @db.VarChar(2)  // ISO 3166-1 alpha-2
+  country_code    String?   @db.VarChar(3)   // ISO 3166-1 alpha-3
+  
+  // Address metadata
+  label           String?   @db.VarChar(50)  // User-defined label
   is_default      Boolean   @default(false)
+  is_verified     Boolean   @default(false)
+  is_active       Boolean   @default(true)
+  
+  // Geocoding information
   latitude        Float?
   longitude       Float?
-  mapbox_id       String?
-  place_formatted String?
-  full_address    String?
-  match_code      Json?
-  is_verified     Boolean   @default(false)
-  user_id         String
+  timezone        String?   @db.VarChar(50)
+  
+  // External service data
+  mapbox_id       String?   @db.VarChar(100) // External service reference
+  place_formatted String?   @db.VarChar(255) // Formatted address from geocoding service
+  full_address    String?   @db.VarChar(255) // Concatenated address string
+  match_code      Json?     // Address verification results
+  metadata        Json?     // Additional flexible storage
+  
+  // Timestamps
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt
 
-  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
-  @@index([user_id])
-  @@index([is_default])
+  // Indexes for common queries
+  @@index([type, user_id])
+  @@index([is_default, is_active])
+  
+  // Ensure only one default address per entity type per user
+  @@unique([type, user_id, is_default], name: "unique_default_address_per_type_per_user")
+  
   @@map("addresses")
 }
 
+//
 // RBAC Models
-model Role {
-  id            String       @id @default(uuid())
-  name          String      @unique
-  description   String?
-  isSystem      Boolean     @default(false)  // Identifies system-level roles
-  parentRoleId  String?     // Support role inheritance
-  parentRole    Role?       @relation("RoleHierarchy", fields: [parentRoleId], references: [id])
-  childRoles    Role[]      @relation("RoleHierarchy")
-  scope         String      @default("global") // global, team, project, custom
-  scopeId       String?     // ID of the scope entity if not global
-  priority      Int         @default(0)      // Higher priority roles override lower ones
-  created_at    DateTime    @default(now())
-  updated_at    DateTime    @updatedAt
-  permissions   RolePermission[]
-  userRoles     UserRole[]
-  conditions    RoleCondition[]
+//
 
-  @@index([scope, scopeId])
-  @@map("roles")
+model Role {
+  id              String           @id @default(uuid())
+  name            String           @unique
+  description     String?
+  isSystem        Boolean          @default(false)
+  parentRoleId    String?
+  priority        Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  parentRole      Role?           @relation("RoleHierarchy", fields: [parentRoleId], references: [id])
+  childRoles      Role[]          @relation("RoleHierarchy")
+  rolePermissions RolePermission[]
+  roleConditions  RoleCondition[]
+  userRoles       UserRole[]
+  teamRoles       TeamRole[]
+  projectRoles    ProjectRole[]
 }
 
 model Permission {
-  id          String       @id @default(uuid())
-  name        String      @unique
-  description String?
-  resource    String      // The resource this permission applies to
-  action      String      // The action allowed
-  conditions  Json?       // JSON object containing permission conditions
-  metadata    Json?       // Additional metadata for the permission
-  created_at  DateTime    @default(now())
-  updated_at  DateTime    @updatedAt
-  roles       RolePermission[]
+  id              String           @id @default(uuid())
+  resource        String
+  action          String
+  attributes      String[]
+  description     String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  rolePermissions RolePermission[]
 
-  @@map("permissions")
+  @@unique([resource, action])
 }
 
 model RolePermission {
-  id            String     @id @default(uuid())
+  id            String               @id @default(uuid())
   roleId        String
   permissionId  String
-  conditions    Json?      // Override conditions for this specific role-permission
-  attributes    String[]   // Specific fields or conditions for this role-permission
-  created_at    DateTime   @default(now())
-  updated_at    DateTime   @updatedAt
-  role          Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission    Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  role          Role                @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission    Permission          @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  conditions    PermissionCondition[]
+}
 
-  @@unique([roleId, permissionId])
-  @@map("role_permissions")
+model PermissionCondition {
+  id               String         @id @default(uuid())
+  rolePermissionId String
+  type            String         // 'time-window' | 'scope-match' | 'team-membership' | 'project-membership' | 'content-state'
+  condition       Json
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  rolePermission  RolePermission @relation(fields: [rolePermissionId], references: [id], onDelete: Cascade)
 }
 
 model RoleCondition {
   id          String    @id @default(uuid())
   roleId      String
-  type        String    // time, location, resource-state, custom
-  condition   Json      // JSON object containing the condition logic
-  priority    Int       @default(0)
-  created_at  DateTime  @default(now())
-  updated_at  DateTime  @updatedAt
+  type        String    // 'time-window' | 'scope-match' | 'team-membership' | 'project-membership' | 'content-state'
+  condition   Json
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   role        Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
-
-  @@map("role_conditions")
 }
 
 model UserRole {
-  id          String    @id @default(uuid())
-  userId      String
-  roleId      String
-  scopeId     String?   // For scoped roles (team, project, etc.)
-  expiresAt   DateTime?
-  conditions  Json?     // User-specific conditions
-  metadata    Json?     // Additional metadata
-  created_at  DateTime  @default(now())
-  updated_at  DateTime  @updatedAt
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role        Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  id        String    @id @default(uuid())
+  userId    String
+  roleId    String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  role      Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, roleId, scopeId])
-  @@map("user_roles")
-}
-
-// Dynamic Scope Models
-model Scope {
-  id          String    @id @default(uuid())
-  name        String    @unique
-  type        String    // team, project, organization, custom
-  description String?
-  metadata    Json?
-  parentId    String?
-  parent      Scope?    @relation("ScopeHierarchy", fields: [parentId], references: [id])
-  children    Scope[]   @relation("ScopeHierarchy")
-  created_at  DateTime  @default(now())
-  updated_at  DateTime  @updatedAt
-
-  @@map("scopes")
+  @@unique([userId, roleId])
 }
 
 model Team {
@@ -191,22 +197,28 @@ model Team {
   created_at  DateTime   @default(now())
   updated_at  DateTime   @updatedAt
   teamRoles   TeamRole[]
-
-  @@map("teams")
 }
 
 model TeamRole {
-  id         String   @id @default(uuid())
-  team_id    String
-  role_id    String
-  user_id    String
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
-  team       Team     @relation(fields: [team_id], references: [id], onDelete: Cascade)
-  role       Role     @relation(fields: [role_id], references: [id], onDelete: Cascade)
-  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  id          String    @id @default(uuid())
+  userId      String    // Added field
+  teamId      String
+  roleId      String
+  conditions  Json?     // Team-specific conditions
+  metadata    Json?     // Additional metadata
+  isActive    Boolean   @default(true)
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
 
-  @@unique([team_id, role_id, user_id])
+  // Relations
+  team        Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  role        Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade) // Added relation
+
+  @@unique([userId, teamId, roleId]) // Updated Unique Constraint
+  @@index([userId])
+  @@index([teamId])
+  @@index([roleId])
   @@map("team_roles")
 }
 
@@ -217,21 +229,63 @@ model Project {
   created_at   DateTime      @default(now())
   updated_at   DateTime      @updatedAt
   projectRoles ProjectRole[]
-
-  @@map("projects")
 }
 
 model ProjectRole {
-  id         String   @id @default(uuid())
-  project_id String
-  role_id    String
-  user_id    String
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
-  project    Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
-  role       Role     @relation(fields: [role_id], references: [id], onDelete: Cascade)
-  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  id          String    @id @default(uuid())
+  userId      String    // Added field
+  projectId   String
+  roleId      String
+  conditions  Json?     // Project-specific conditions
+  metadata    Json?     // Additional metadata
+  isActive    Boolean   @default(true)
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
 
-  @@unique([project_id, role_id, user_id])
+  // Relations
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  role        Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade) // Added relation
+
+  @@unique([userId, projectId, roleId]) // Updated Unique Constraint
+  @@index([userId])
+  @@index([projectId])
+  @@index([roleId])
   @@map("project_roles")
+}
+
+model notifications {
+  id          String    @id @default(uuid())
+  userId      String
+  type        String    // 'info', 'success', 'warning', 'error'
+  title       String
+  message     String
+  read        Boolean   @default(false)
+  readAt      DateTime?
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@index([read])
+  @@map("notifications")
+}
+
+model Scope {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  type        String    // 'team', 'project', 'organization', 'custom'
+  description String?
+  metadata    Json?
+  parentId    String?
+  parent      Scope?    @relation("ScopeHierarchy", fields: [parentId], references: [id])
+  children    Scope[]   @relation("ScopeHierarchy")
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  @@map("scopes")
 }
